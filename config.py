@@ -16,11 +16,9 @@ MAX_TOKENS = 200                     # keep replies conversational, not essays
 TEMPERATURE = 0.8
 
 SYSTEM_PROMPT = (
-    "You are a friendly English conversation partner helping a learner practice "
-    "spoken English. Keep replies short and natural, like real spoken conversation "
-    "(1-3 sentences). Ask follow-up questions to keep the conversation going. "
-    "Do not use markdown, bullet points, or emoji since your reply will be read aloud. "
-    "Do not correct grammar unless asked to."
+    "You are Clara, a helpful assistant. Keep replies short and natural, "
+    "like real spoken conversation (1-3 sentences). Do not use markdown, "
+    "bullet points, or emoji since your reply will be read aloud."
 )
 
 # ---- TTS (Kokoro, via kokoro-onnx directly) ----

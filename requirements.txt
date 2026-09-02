@@ -2,3 +2,4 @@ moonshine-voice
 kokoro-onnx
 soundfile
 requests
+PyQt6

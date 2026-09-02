@@ -31,6 +31,16 @@ class Bot:
 
         self.line_queue: "queue.Queue[str]" = queue.Queue()
 
+        # Optional GUI callbacks — set these before run() to receive events.
+        # on_reply_delta(token)  — called for each streamed token from the LLM
+        # on_reply_done()        — called once when the full reply is finished
+        # on_partial(text)       — called with partial STT transcript
+        # on_user_line(text)     — called when an utterance is finalized
+        self.on_reply_delta = None
+        self.on_reply_done = None
+        self.on_partial = None
+        self.on_user_line = None
+
         self.mic = (
             MicTranscriber()
             .language(cfg.MOONSHINE_LANGUAGE)
@@ -43,7 +53,10 @@ class Bot:
     def _on_text(self, text: str):
         """Fires continuously with partial transcript while speech is heard."""
         if text.strip():
-            print(f"\r  ...{text}", end="", flush=True)
+            if self.on_partial:
+                self.on_partial(text)
+            else:
+                print(f"\r  ...{text}", end="", flush=True)
 
     def _on_line(self, line):
         """Fires once an utterance is finalized."""
@@ -51,6 +64,8 @@ class Bot:
         if text:
             if DEBUG_TIMING:
                 print(f"\n  [t=0.00s] STT finalized")
+            if self.on_user_line:
+                self.on_user_line(text)
             self.line_queue.put(text)
 
     # ---- main loop ----
@@ -100,18 +115,27 @@ class Bot:
         sentence N+1 is being synthesized while sentence N is still playing.
         """
         printed = []
+        has_gui = self.on_reply_delta is not None
 
         def sentences():
             for sentence, is_final in llm.stream_reply(user_text, self.stop_flag):
                 if not sentence:
                     continue
                 printed.append(sentence)
-                print(f"\nBot: {' '.join(printed)}", end="", flush=True)
+                if has_gui:
+                    self.on_reply_delta(sentence)
+                else:
+                    print(f"\nBot: {' '.join(printed)}", end="", flush=True)
                 yield sentence
 
-        print("Bot: ", end="", flush=True)
+        if not has_gui:
+            print("Bot: ", end="", flush=True)
         completed = tts.speak_stream(sentences(), self.stop_flag)
-        print()
+        if has_gui:
+            if self.on_reply_done:
+                self.on_reply_done()
+        else:
+            print()
         return not completed
 
 
