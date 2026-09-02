@@ -8,7 +8,11 @@ import requests
 
 import config as cfg
 
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# Split right after . ! or ? — do NOT require trailing whitespace, since a
+# streamed delta can end exactly on the punctuation with the next word's
+# space arriving in a later chunk. Requiring \s+ here delayed every sentence
+# flush by one extra network round-trip.
+_SENTENCE_END = re.compile(r"(?<=[.!?])")
 
 history = [{"role": "system", "content": cfg.SYSTEM_PROMPT}]
 
@@ -40,6 +44,9 @@ def stream_reply(user_text: str, stop_flag):
     buffer = ""
     full_reply = ""
 
+    # stream=True + iter_lines/iter_content only avoids buffering the whole
+    # body if the server itself flushes chunks promptly; llama-server does
+    # this correctly over SSE, so this should yield incrementally.
     with requests.post(cfg.LLAMA_SERVER_URL, json=payload, stream=True, timeout=60) as resp:
         resp.raise_for_status()
         for line in resp.iter_lines(decode_unicode=True):
@@ -62,10 +69,12 @@ def stream_reply(user_text: str, stop_flag):
             buffer += delta
             full_reply += delta
 
-            # flush complete sentences as they form
+            # flush complete sentences (and any leading whitespace of the
+            # next one) as soon as terminal punctuation appears
             parts = _SENTENCE_END.split(buffer)
             if len(parts) > 1:
                 *complete, buffer = parts
+                buffer = buffer.lstrip()
                 for sentence in complete:
                     sentence = sentence.strip()
                     if sentence:

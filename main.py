@@ -21,6 +21,8 @@ import config as cfg
 import llm
 import tts
 
+DEBUG_TIMING = True  # set False once you're happy with latency
+
 
 class Bot:
     def __init__(self):
@@ -53,6 +55,8 @@ class Bot:
         """Fires once an utterance is finalized."""
         text = line.text.strip()
         if text:
+            if DEBUG_TIMING:
+                print(f"\n  [t=0.00s] STT finalized")
             self.line_queue.put(text)
 
     # ---- main loop ----
@@ -77,28 +81,13 @@ class Bot:
                     self.state = "SPEAKING"
                 self.interrupt_flag.clear()
 
-                interrupted = False
-                print("Bot: ", end="", flush=True)
-                for sentence, is_final in llm.stream_reply(user_text, self.stop_flag):
-                    if self.stop_flag():
-                        interrupted = True
-                        break
-                    if not sentence:
-                        continue
-                    print(sentence, end=" ", flush=True)
-                    completed = tts.speak_interruptible(sentence, self.stop_flag)
-                    if not completed:
-                        interrupted = True
-                        break
-                print()
+                interrupted = self._speak_reply(user_text)
 
                 with self.state_lock:
                     self.state = "LISTENING"
 
                 if interrupted:
                     print("[interrupted — listening again]")
-                    # drain any queued lines that arrived while we were mid-sentence,
-                    # so we respond to the freshest thing the user said
                     time.sleep(0.05)
                 else:
                     print("[listening]")
@@ -107,6 +96,63 @@ class Bot:
             pass
         finally:
             self.mic.stop()
+
+    def _speak_reply(self, user_text: str) -> bool:
+        """
+        Runs LLM generation and TTS playback concurrently: a producer thread
+        pulls sentences from llm.stream_reply as fast as the model emits them
+        and puts them on a queue; this (main) thread plays each sentence as
+        soon as it's available. This means sentence 2 is already being
+        generated while sentence 1 is being spoken, instead of the two
+        happening strictly one-after-the-other.
+
+        Returns True if interrupted (barge-in), False if completed normally.
+        """
+        sentence_queue: "queue.Queue[tuple[str, bool] | None]" = queue.Queue()
+        t_start = time.monotonic()
+
+        def producer():
+            try:
+                for sentence, is_final in llm.stream_reply(user_text, self.stop_flag):
+                    if DEBUG_TIMING:
+                        print(f"\n  [+{time.monotonic()-t_start:.2f}s] LLM sentence ready: {sentence!r}")
+                    sentence_queue.put((sentence, is_final))
+                    if self.stop_flag():
+                        break
+            finally:
+                sentence_queue.put(None)  # sentinel: generation done
+
+        producer_thread = threading.Thread(target=producer, daemon=True)
+        producer_thread.start()
+
+        interrupted = False
+        print("Bot: ", end="", flush=True)
+        while True:
+            item = sentence_queue.get()
+            if item is None:
+                break
+            sentence, is_final = item
+            if self.stop_flag():
+                interrupted = True
+                break
+            if not sentence:
+                continue
+            print(sentence, end=" ", flush=True)
+            if DEBUG_TIMING:
+                t_tts_start = time.monotonic()
+            completed = tts.speak_interruptible(sentence, self.stop_flag)
+            if DEBUG_TIMING:
+                print(f"\n  [+{time.monotonic()-t_start:.2f}s] TTS done "
+                      f"(took {time.monotonic()-t_tts_start:.2f}s)")
+            if not completed:
+                interrupted = True
+                break
+        print()
+
+        if interrupted:
+            self.interrupt_flag.set()  # ensure producer thread also stops promptly
+        producer_thread.join(timeout=2)
+        return interrupted
 
 
 if __name__ == "__main__":
