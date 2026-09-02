@@ -1,68 +1,126 @@
-# English Practice Bot (full-duplex, offline)
+# Clara — Offline Voice Conversation Bot
 
-Pipeline: Mic → `MicTranscriber` (moonshine-voice: VAD + STT built in)
-→ Gemma 4 E2B via llama-server → Kokoro (TTS) → Speaker
+**Full-duplex, offline voice bot for natural conversation practice.**
 
-## Setup
+Talk to Clara like a real person. She listens, responds, and you can interrupt her mid-sentence — all running locally on your machine.
 
-1. `llama-server` should already be running with Gemma on `http://localhost:8081`.
+[![Stars](https://img.shields.io/github/stars/uxlabspk/Clara?style=social)](https://github.com/uxlabspk/Clara)
 
-2. Put `kokoro-v1.0.fp16.onnx` and `voices-v1.0.bin` in this directory
-   (or update paths in `config.py`).
+---
 
-3. Install dependencies (you already have `moonshine-voice` and `kokoro-onnx`,
-   this just adds the couple of extras):
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Features
 
-4. **Use headphones for your first tests.** Without them, the bot's speaker
-   output leaks into the mic and can falsely trigger barge-in.
+- **Full-duplex conversation** — interrupt Clara mid-sentence with natural barge-in
+- **Fully offline** — no API keys, no cloud, no data leaves your machine
+- **Streaming TTS** — she starts speaking before she finishes thinking
+- **Sentence-level pipelining** — next sentence synthesizes while current one plays
+- **Dual interface** — terminal CLI or PyQt6 GUI with audio-reactive waveform
+- **Configurable persona** — edit `SYSTEM_PROMPT` in `config.py`
 
-5. Run it:
-   ```bash
-   python main.py
-   ```
+## Architecture
 
-## How it works
+```
+Microphone
+    ↓
+MicTranscriber (moonshine-voice)   VAD + STT, partial & final transcripts
+    ↓
+Gemma 4 E2B (llama-server)         Streaming token generation via SSE
+    ↓
+Sentence splitter                   Buffers tokens, yields complete sentences
+    ↓
+Kokoro TTS (ONNX)                  Synthesizes sentences in parallel thread
+    ↓
+aplay (ALSA)                       Interruptible playback
+    ↓
+Speaker
+```
 
-- `moonshine_voice.MicTranscriber` owns the microphone entirely — it does
-  its own capture, VAD, and segmentation, and calls back:
-  - `on_text(text)` — fires continuously with the partial transcript while
-    it hears live speech.
-  - `on_line(line)` — fires once when an utterance is finalized.
-- We use `on_line` to know when you've finished a turn, and send that text
-  to Gemma.
-- We use `on_text` as the **barge-in signal**: if it fires while the bot is
-  in the SPEAKING state, that means you're talking over it, so we set an
-  interrupt flag.
-- The interrupt flag is checked by both `llm.py` (aborts the streaming
-  generation) and `tts.py` (aborts audio playback mid-sentence) — so both
-  stop almost immediately.
-- Gemma's reply streams token-by-token from `llama-server` and is split into
-  sentences as they complete, so Kokoro can start speaking the first
-  sentence before Gemma has finished generating the rest of the reply —
-  this is what keeps the perceived latency low.
+**Barge-in flow:** When you start talking while Clara speaks, `on_text` partial transcripts fire → `stop_flag` is set → LLM stream aborts + `aplay` process killed → Clara listens again.
+
+**Pipelining:** A bounded queue (maxsize=2) overlaps TTS synthesis of sentence N+1 with playback of sentence N, keeping perceived latency low.
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.10+
+- `moonshine-voice` and `kokoro-onnx` installed
+- `llama-server` running with Gemma on `http://localhost:8081`
+- `aplay` (ALSA utils) for audio playback
+
+### Install
+
+```bash
+pip install -r requirements.txt
+```
+
+Place Kokoro model files in the `tts/` directory:
+- `kokoro-v1.0.fp16.onnx` (GPU) or `kokoro-v1.0.int8.onnx` (CPU)
+- `voices-v1.0.bin`
+
+### Run
+
+**Terminal mode:**
+```bash
+python main.py
+```
+
+**GUI mode:**
+```bash
+python run_gui.py
+```
+
+> **Use headphones** for your first test. Without them, speaker output can leak into the mic and trigger false barge-ins.
+
+## Configuration
+
+All settings live in `config.py`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LLAMA_SERVER_URL` | `http://localhost:8081` | LLM endpoint |
+| `SYSTEM_PROMPT` | Clara persona | Bot personality and behavior |
+| `MAX_TOKENS` | `512` | Max response length |
+| `TEMPERATURE` | `0.7` | Response creativity |
+| `KOKORO_VOICE` | `af_heart` | Voice style |
+| `KOKORO_SPEED` | `1.0` | Speech rate |
+| `KOKORO_LANG` | `a` | Language |
 
 ## Tuning
 
-- If Moonshine's VAD is too twitchy or slow to finalize lines, check its
-  own configuration methods (`update_interval()`, etc. — see the
-  moonshine-voice docs) rather than tuning here; we're not running a
-  separate VAD anymore.
-- If barge-in triggers on the bot's own voice: use headphones. If that's
-  not possible, we can add a "don't listen to on_text while unless it
-  persists for N callbacks" debounce — ask and I'll add it.
-- `SYSTEM_PROMPT` in `config.py` controls Gemma's conversational style —
-  edit freely.
-- If Kokoro playback lags: the fp16 model is GPU-oriented; a quantized/int8
-  Kokoro build may run faster on CPU.
+- **VAD too twitchy/slow** — adjust `moonshine_voice.MicTranscriber` methods (e.g., `update_interval()`). See moonshine-voice docs.
+- **False barge-ins** — use headphones. Alternatively, request a debounce filter.
+- **TTS latency** — use `kokoro-v1.0.int8.onnx` for faster CPU inference (fp16 is GPU-oriented).
+- **Response style** — edit `SYSTEM_PROMPT` in `config.py`.
 
-## Known limitations / next steps
+## Known Limitations
 
-- Terminal-only for now (GUI planned later).
-- No acoustic echo cancellation — headphones recommended for reliable
-  barge-in.
-- If you barge in mid-sentence, the partial bot reply is not saved to
-  conversation history as if it were fully said.
-- No wake word — always listening once running.
+- No acoustic echo cancellation — headphones recommended for reliable barge-in
+- Barge-in discards partial bot responses (not saved to conversation history)
+- No wake word — always listening once started
+- `aplay` used instead of PortAudio to avoid JACK interference (documented in `tts.py`)
+
+## Project Structure
+
+```
+├── main.py          Core Bot class + CLI entry point
+├── config.py        All configuration (LLM, TTS, STT)
+├── llm.py           LLM streaming client (llama-server SSE)
+├── tts.py           TTS synthesis + interruptible playback pipeline
+├── gui.py           PyQt6 GUI with waveform visualization
+├── run_gui.py       GUI launcher
+├── tts/             Kokoro model files + test script
+└── requirements.txt
+```
+
+## Contributing
+
+Contributions welcome. Open an issue or submit a PR.
+
+## License
+
+MIT
+
+---
+
+**If you find Clara useful, please star the repo** — it helps others discover it.
