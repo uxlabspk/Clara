@@ -24,7 +24,7 @@ SYSTEM_PROMPT = (
 )
 
 # ---- TTS (Kokoro, via kokoro-onnx directly) ----
-KOKORO_MODEL_PATH = "tts/kokoro-v1.0.onnx"
+KOKORO_MODEL_PATH = "tts/kokoro-v1.0.fp16.onnx"
 KOKORO_VOICES_PATH = "tts/voices-v1.0.bin"
 KOKORO_VOICE = "af_heart"
 KOKORO_SPEED = 1.0
