@@ -1,12 +1,11 @@
 """
-English conversation practice bot — full-duplex, offline.
+English conversation practice bot — offline.
 
 Pipeline: Mic -> MicTranscriber (moonshine-voice: VAD+STT built in)
           -> Gemma (llama-server, streamed) -> Kokoro (TTS) -> Speaker
 
-Barge-in: MicTranscriber keeps listening in the background even while
-the bot is speaking. Any live partial transcript (on_text) during
-SPEAKING is treated as the user interrupting.
+Mic is stopped while the bot speaks to prevent its own voice from being
+transcribed and causing a feedback loop. No headphones required.
 
 Run: python main.py
 """
@@ -43,12 +42,7 @@ class Bot:
 
     def _on_text(self, text: str):
         """Fires continuously with partial transcript while speech is heard."""
-        with self.state_lock:
-            speaking = self.state == "SPEAKING"
-        if speaking and text.strip():
-            self.interrupt_flag.set()
-        else:
-            # live feedback while user is talking to us
+        if text.strip():
             print(f"\r  ...{text}", end="", flush=True)
 
     def _on_line(self, line):
@@ -80,11 +74,13 @@ class Bot:
                 with self.state_lock:
                     self.state = "SPEAKING"
                 self.interrupt_flag.clear()
+                self.mic.stop()
 
                 interrupted = self._speak_reply(user_text)
 
                 with self.state_lock:
                     self.state = "LISTENING"
+                self.mic.start()
 
                 if interrupted:
                     print("[interrupted — listening again]")
