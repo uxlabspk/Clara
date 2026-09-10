@@ -27,3 +27,6 @@ KOKORO_VOICES_PATH = "tts/voices-v1.0.bin"
 KOKORO_VOICE = "af_heart"
 KOKORO_SPEED = 1.0
 KOKORO_LANG = "en-us"
+
+# ---- Web search (DuckDuckGo, no key needed) ----
+ENABLE_WEB_SEARCH = True

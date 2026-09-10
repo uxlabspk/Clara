@@ -7,6 +7,15 @@ import re
 import requests
 
 import config as cfg
+import web
+
+# Keywords that suggest the user wants current/external information
+_SEARCH_HINTS = re.compile(
+    r"\b(news|latest|today|recent|current|now|this week|this month|this year|"
+    r"what(?:'s| is) (?:the |happening|going on)|who is|who won|"
+    r"stock|price|score|weather|update|headline)\b",
+    re.IGNORECASE,
+)
 
 # Split right after . ! or ? — do NOT require trailing whitespace, since a
 # streamed delta can end exactly on the punctuation with the next word's
@@ -33,9 +42,25 @@ def stream_reply(user_text: str, stop_flag):
     """
     history.append({"role": "user", "content": user_text})
 
+    # --- web search injection ---
+    search_snippet = ""
+    if cfg.ENABLE_WEB_SEARCH and _SEARCH_HINTS.search(user_text):
+        search_snippet = web.search(user_text)
+
+    messages = list(history)
+    if search_snippet:
+        # Prepend search results as system context so the LLM can use them.
+        messages.insert(1, {
+            "role": "system",
+            "content": (
+                "Web search returned the following results. "
+                "Use them if relevant, ignore if not.\n\n" + search_snippet
+            ),
+        })
+
     payload = {
         "model": cfg.LLAMA_MODEL_NAME,
-        "messages": history,
+        "messages": messages,
         "max_tokens": cfg.MAX_TOKENS,
         "temperature": cfg.TEMPERATURE,
         "stream": True,
