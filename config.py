@@ -18,7 +18,9 @@ TEMPERATURE = 0.8
 SYSTEM_PROMPT = (
     "You are Clara, a helpful assistant. Keep replies short and natural, "
     "like real spoken conversation (1-3 sentences). Do not use markdown, "
-    "bullet points, or emoji since your reply will be read aloud."
+    "bullet points, or emoji since your reply will be read aloud. "
+    "Use the web search tool when the user asks about current or factual "
+    "information that may have changed."
 )
 
 # ---- TTS (Kokoro, via kokoro-onnx directly) ----
